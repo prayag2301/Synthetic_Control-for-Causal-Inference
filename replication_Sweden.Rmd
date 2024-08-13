@@ -1,0 +1,727 @@
+---
+title: "Carbon Taxes and CO2 Emissions: Sweden as a Case Study"
+output: html_document
+date: "2024-03-19"
+author: "Group Daikon"
+---
+
+This R markdown document serves as a replication code from the article "Carbon Taxes and CO2 Emissions: Sweden as a Case Study" by Julius J. Andersson
+from American Economic Journal: Economic Policy, 2019. It is part of a groupwork project in the scope of the Machine Learning and Causality class at ESMT Berlin. A few changes have been made to the synthetic control methods to learn about the significance of implementing different methods of SCM( eg "in-time", "in-place" and "Leave-one-out")
+
+In this code we first upload the necessary libraries.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(haven)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+library(Synth)
+ library(foreign)
+library(plm)
+library(lmtest)
+library(sandwich)
+library(AER)
+library(stargazer)
+```
+Here we import the descriptive_data.dta dataset that includes the data on gasoline fuel tax rates and prices in Sweden and OECD countries as well as data on CO2 emissions from transport and other descriptive data. 
+
+```{r}
+data <- read.dta("descriptive_data.dta")
+```
+
+Here we recreate the graph showing gasoline price components in Sweden from 1960-2005. We can clearly see how the carbon tax increased after year 1990.
+
+```{r}
+
+p1 <- ggplot(data, aes(x = year)) + 
+  geom_line(aes(y = Real_Gasoline_Price), color = "red") +
+  geom_line(aes(y = Real_Carbontax), color = "blue") +
+  geom_line(aes(y = Real_VAT), color = "purple") +
+  geom_line(aes(y = Real_Energytax), color = "green") +
+  geom_vline(xintercept = 1990, linetype = "dotted") +
+  geom_label(data = subset(data, year == 1990), aes(y = Real_Gasoline_Price + 2, label = "Gasoline price"), color = "red", hjust = -0.2, size = 3) +
+  geom_label(data = subset(data, year == 1995), aes(y = Real_Carbontax - 0.5, label = "Carbon tax"), color = "blue", hjust = -0.2, size = 3) +
+  geom_label(data = subset(data, year == 1990), aes(y = Real_VAT +  0.5, label = "VAT"), color = "purple", hjust = -0.2, size = 3) +
+  geom_label(data = subset(data, year == 1990), aes(y = Real_Energytax+1, label = "Energy tax"), color = "green", hjust = -0.2, size = 3) +
+  scale_y_continuous(name = "Real price (SEK/litre)", limits = c(0, 13)) +
+  scale_x_continuous(name = "Year") +
+  theme_minimal() +
+  labs(title = "Gasoline Price Components in Sweden 1960-2005",) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_colour_manual(values = c("red", "blue", "purple", "green"),
+                      labels = c("Gasoline price", "Carbon tax", "VAT", "Energy tax"),
+                      breaks = c("Real_Gasoline_Price", "Real_Carbontax", "Real_VAT", "Real_Energytax")) +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size = 12), 
+        legend.key.size = unit(1, "cm"))
+```
+
+
+Here we recreate the lineplot of total tax and gasoline price in Sweden for the years 1960-2005. We observe that the gasoline prices are rising together with total tax indicating that the tax is mainly passed to consumers.
+
+```{r}
+
+p2 <- ggplot(data, aes(x = year)) + 
+  geom_line(aes(y = Real_Gasoline_Price), color = "blue") +
+  geom_line(aes(y = Real_total_tax), color = "purple") +
+  geom_vline(xintercept = 1990,linetype='dashed') +
+  scale_y_continuous(name = "Real price (SEK/litre)", limits = c(0, 13)) +
+  scale_x_continuous(name = "Year") +
+  theme_minimal() +
+  labs(title = "Gasoline Price and Total Tax in Sweden 1960-2005") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_label(data = subset(data, year == 1995), aes(y = Real_Gasoline_Price+2.5, label = "Gasoline price"), color = "blue", hjust = -0.2, size = 3) +
+  geom_label(data = subset(data, year == 1995), aes(y = Real_total_tax-1, label = "Total tax"), color = "purple", hjust = -0.2, size = 3) 
+
+```
+
+```{r}
+p3 <- p1 + p2
+
+ggsave("figure1.png",width = 30, height = 30, units = "cm")
+```
+
+
+We then recreate the graph of road sector fuel consumption per capita (kg of oil equivalent). We plot the clear separation of when the VAT + carbon tax were introduced. After the introduction we can observe the reduction of gasoline consumption.
+
+
+```{r}
+ggplot(data, aes(x = year)) +
+  geom_line(aes(y = gas_cons), color = "blue") +
+  geom_line(aes(y = diesel_cons), color = "purple") +
+  geom_vline(xintercept = 1990, linetype = "dotted", color = "black") +
+  geom_segment(aes(x = 1987, y = 100, xend = 1989, yend = 100), color = "black", arrow = arrow(length = unit(0.1, "inches"))) +
+  annotate("text", x = 1981, y = 100, label = "VAT + Carbon tax", size = 4) +
+  scale_y_continuous(name = "Road sector fuel consumption per capita (kg of oil equivalent)", limits = c(0, 600)) +
+  scale_x_continuous(name = "Year") +
+  theme_minimal() +
+  labs(title = "Fuel Consumption in the Road Sector") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  guides(color = guide_legend(title = NULL)) +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size = 12), 
+        legend.key.size = unit(1, "cm")) +
+    geom_label(data = subset(data, year == 1995), aes(y = gas_cons+2.5, label = "Gasoline"), color = "blue", hjust = -0.2, size = 3) +
+  geom_label(data = subset(data, year == 1995), aes(y = diesel_cons-1, label = "Diesel"), color = "purple", hjust = -0.2, size = 3)
+ggsave('figure2.jpg')
+```
+
+
+We then show how the per capita CO2 emissions from transport of Sweden and OECD sample. We observe similar trends until 1980 but also a clear divergence of the per capita C02 emissions from transport as the one of Sweden decreased compared to the one of OECD sample.
+
+```{r}
+ggplot(data, aes(x = year)) +
+  geom_line(aes(y = CO2_Sweden), color = "blue") +
+  geom_line(aes(y = CO2_OECD), color = "purple") +
+  geom_vline(xintercept = 1990, linetype = "dotted",color='gray') + 
+  annotate("text", x = 1995, y = 0.10, label = "VAT + Carbon tax", size = 3.5, color='gray') + 
+  scale_y_continuous(name = "Metric tons per capita (CO2 from transport)", limits = c(0, 3)) +
+  scale_x_continuous(name = "Year") +
+  theme_minimal() + 
+  labs(title = "CO2 Emissions from Transport in Sweden vs. OECD Sample") + # Title
+  theme(plot.title = element_text(hjust = 0.5)) + # Center title
+  guides(color = guide_legend(title = NULL)) + # No legend title
+  theme(legend.position = "bottomright") + # Legend position
+  scale_color_manual(values = c("Sweden" = "blue", "OECD sample" = "red"),
+                     labels = c("Sweden", "OECD sample"),
+                     breaks = c("CO2_Sweden", "CO2_OECD")) +
+geom_label(data = subset(data, year == 1995), aes(y = CO2_Sweden-0.2, label = "Sweden"), color = "blue", size = 3) +
+geom_label(data = subset(data, year == 1995), aes(y = CO2_OECD+0.2, label = "OECD"), color = "purple", size = 3) 
+ggsave('figure3.jpg')
+
+```
+
+
+
+```{r}
+
+ carbontax <- read.dta('carbontax_data.dta')
+attach(carbontax)
+ dataprep.out <- dataprep(foo = carbontax,
+                          predictors = c("GDP_per_capita", "gas_cons_capita", "vehicles_capita",
+                                         "urban_pop", "CO2_transport_capita"),
+                          predictors.op = "mean",
+                          time.predictors.prior = 1980:1989,
+                          special.predictors = list(
+                            list("CO2_transport_capita", 1989, "mean"),
+                            list("CO2_transport_capita", 1980, "mean"),
+                            list("CO2_transport_capita", 1970, "mean")
+                          ),
+                          dependent = "CO2_transport_capita",
+                          unit.variable = "Countryno",
+                          unit.names.variable = "country",
+                          time.variable = "year",
+                          treatment.identifier = 13,
+                          controls.identifier = c(1:12, 14:15),
+                          time.optimize.ssr = 1960:1989,
+                          time.plot = 1960:2005
+                          #lags = c(1)  # Introduce lag of 1 year for CO2_transport_capita
+ )
+
+
+ synth.out <- synth(data.prep.obj = dataprep.out,
+                    method = "All")
+	
+ synth.tables <- synth.tab(dataprep.res = dataprep.out,
+                           synth.res = synth.out
+                           )
+
+
+### Table 1: CO2 Emissions From Transport Predictor Means Before Tax Reform	
+ synth.tables$tab.pred[1:7, ]
+ 
+
+### Table 2: Country Weights in Synthetic Sweden
+ synth.tables$tab.w[1:14, ]
+
+
+### Figure 4: Path Plot of per capita CO2 Emissions from Transport
+
+ par(col.axis = "darkgray", col.lab = "black", col.main = "black", col.sub = "black")  # Set axis, labels, title, and subtitle color to black
+ par(font.main = 1, font.axis = 1, font.lab = 1, font.sub = 1)  # Set font style to bold
+ par(bg = "white") 
+ path.plot(synth.res = synth.out,
+           dataprep.res = dataprep.out,
+           Ylab = "Metric tons per capita (CO2 from transport)",
+           Xlab = "Year",
+           Ylim = c(0,3),
+           Legend = c("Sweden","synthetic Sweden"),
+           Legend.position = "bottomright"
+           )
+# Add line
+abline(v=1990,lty="dotted",lwd=2)
+arrows(1987,1.0,1989,1.0,col="blue",length=.1)
+Cex.set <- 1
+text(1978,1.0,"VAT + Carbon tax",col="blue",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+
+#changed colours and placeholder placement
+```
+
+
+Figure 5: Gap in per capita CO2 Emissions from Transport between Sweden and Synthetic Sweden
+
+```{r}
+
+ gaps.plot(synth.res = synth.out,
+           dataprep.res = dataprep.out,
+           Ylab = "Gap in metric tons per capita (CO2 from transport)",
+           Xlab = "Year",
+           Ylim = c(-0.5,0.5),
+           Main = NA
+           )
+
+#Add line
+abline(v=1990,lty="dotted",lwd=2)
+arrows(1987,0.3,1989,0.3,col="blue",length=.1)	
+Cex.set <- 1
+text(1979,0.3,"VAT + Carbon tax",col="blue",cex=Cex.set)
+```
+For the in-time tests, the year of treatment is shifted to 1970 and 1985, years that are both prior to the actual environmental tax reform. For the two tests, the choice of synthetic control is based only on data from 1960–1969 and 1960–1984, respectively. We want to find that this placebo treatment doesn’t result in a post-placebo-treatment divergence in the trajectory of emissions between Sweden and its synthetic control.
+
+
+
+### Placebo in-time test
+
+Placebo test in time for 1985. Observe tax effect until 2000 instead of 1990 to increase emphasis of special predictors on the outcome (C02).
+
+```{r}
+dataprep.out <-
+  dataprep(foo = carbontax,
+           predictors = c("GDP_per_capita" , "gas_cons_capita" , "vehicles_capita" ,
+                          "urban_pop") ,
+           predictors.op = "mean" ,
+           time.predictors.prior = 1970:1984 ,
+           special.predictors = list(
+             list("CO2_transport_capita" , 1984 , "mean"),
+             list("CO2_transport_capita" , 1975 , "mean"),
+             list("CO2_transport_capita" , 1970 , "mean")
+           ),
+           dependent = "CO2_transport_capita",
+           unit.variable = "Countryno",
+           unit.names.variable = "country",
+           time.variable = "year",
+           treatment.identifier = 13,
+           controls.identifier = c(1:12,14:15),
+           time.optimize.ssr = 1960:1984,
+           time.plot = 1960:2000
+  )
+
+synth.out <- synth(
+  data.prep.obj = dataprep.out,
+  method = "BFGS"
+)
+
+#png("placebo_1985.png", width = 800, height = 600)  # Adjust width and height as needed
+
+path.plot(synth.res = synth.out,
+          dataprep.res = dataprep.out,
+          Ylab = "Metric tons per capita (CO2 from transport)",
+          Xlab = "Year",
+          Ylim = c(0,3),
+          Legend = c("Sweden","synthetic Sweden"),
+          Legend.position = "bottomright"
+)
+
+# Add line 
+abline(v=1985,lty="dotted",lwd=2)
+arrows(1982,1.0,1984,1.0,col="black",length=.1)	
+Cex.set <- 1
+text(1979,1.0,"Placebo tax",col="blue",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+
+#dev.off()
+
+```
+Placebo test in time for 1970 (excluding Poland due to missing GDP data 1960-69).  
+By making changes in the special predictors list we can analyse the impact of additional independant variables.
+
+We want to check if vehicles per capita has a significant impact on the outcome(increase co2) under the assumption that it is not affected by the treatment (imposing vat and carbon tax).
+```{r}
+dataprep.out <-
+              dataprep(foo = carbontax,
+                       predictors = c("GDP_per_capita" , "gas_cons_capita" , "vehicles_capita" ,
+                                      "urban_pop") ,
+                       predictors.op = "mean" ,
+                       time.predictors.prior = 1960:1969 ,
+                       special.predictors = list(
+                         list("CO2_transport_capita" , 1960:1970 , "mean"),
+                         list("vehicles_capita" , 1960:1970 , "mean")
+                         
+                                   ),
+                       dependent = "CO2_transport_capita",
+                       unit.variable = "Countryno",
+                       unit.names.variable = "country",
+                       time.variable = "year",
+                       treatment.identifier = 13,
+                       controls.identifier = c(1:9, 11:12, 14:15),
+                       time.optimize.ssr = 1960:1969,
+                       time.plot = 1960:1990
+                       )
+
+synth.out <- synth(
+                   data.prep.obj = dataprep.out,
+                   method = "All"
+                   )
+#png("placebo_1970.png", width = 800, height = 600)  # Adjust width and height as needed
+
+ path.plot(synth.res = synth.out,
+           dataprep.res = dataprep.out,
+           Ylab = "Metric tons per capita (CO2 from transport)",
+           Xlab = "Year",
+           Ylim = c(0,3),
+           Legend = c("Sweden","synthetic Sweden"),
+           Legend.position = "bottomright"
+           )
+
+# Add line 
+abline(v=1970,lty="dotted",lwd=2)
+arrows(1968,2.0,1969.5,2.0,col="black",length=.1)	
+Cex.set <- 1
+text(1965,2.0,"Placebo tax",col="blue",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+
+#dev.off()
+```
+We observe that co2 values increase with special predictors indicating that carbon tax indeed influenced the number of vehicles per capita. 
+
+###  Placebo in-space tests
+For the in-space placebo test, the treatment is iteratively reassigned to every country in the donor pool, again using the synthetic control method to construct synthetic counterparts.
+```{r}
+
+store <- matrix(NA,length(1960:2005),15)
+colnames(store) <- unique(carbontax$country)
+
+#added additional years of co2_transport_capita in special predictors to increase emphasis for the outcome of interest(co2 from trans)
+
+# run placebo test
+for(iter in 1:15)
+ {
+ dataprep.out <-
+              dataprep(foo = carbontax,
+                       predictors = c("GDP_per_capita" , "gas_cons_capita" , "vehicles_capita" ,
+                                      "urban_pop") ,
+                       predictors.op = "mean" ,
+                       time.predictors.prior = 1980:1989 ,
+                       special.predictors = list(
+                         list("CO2_transport_capita" , 1989 , "mean"),
+				list("CO2_transport_capita" , 1980 , "mean") ,
+				list("CO2_transport_capita" , 1975 , "mean"),
+				list("CO2_transport_capita" , 1970 , "mean"),
+				list("CO2_transport_capita" , 1965 , "mean")
+				
+					  ),
+                       dependent = "CO2_transport_capita",
+                       unit.variable = "Countryno",
+                       unit.names.variable = "country",
+                       time.variable = "year",
+                       treatment.identifier = iter,
+                       controls.identifier = c(1:15)[-iter],
+                       time.optimize.ssr = 1960:1989,
+                       time.plot = 1960:2005
+                       )
+
+
+
+# run synth
+synth.out <- synth(
+                   data.prep.obj = dataprep.out,
+                   method = "BFGS"
+                   )
+
+# store gaps
+store[,iter] <- dataprep.out$Y1plot - (dataprep.out$Y0plot %*% synth.out$solution.w)
+}
+
+# now do figure
+data <- store
+rownames(data) <- 1960:2005
+
+# Set bounds in gaps data
+gap.start     <- 1
+gap.end       <- nrow(data)
+years         <- 1960:2005
+gap.end.pre  <- which(rownames(data)=="1989")
+
+#  MSPE Pre-Treatment
+mse        <- apply(data[ gap.start:gap.end.pre,]^2,2,mean)
+sweden.mse <- as.numeric(mse[13])
+# Exclude states with 20 times higher MSPE than Sweden (to include all countries, set value to 1000)
+data <- data[,mse<20*sweden.mse]
+Cex.set <- 1
+
+# Plot
+plot(years,data[gap.start:gap.end,which(colnames(data)=="Sweden")],
+     ylim=c(-1,1),xlab="Year",
+     xlim=c(1960,2005),ylab="Gap in metric tons per capita (CO2 from transport)",
+     type="l",lwd=2,col="black",
+     xaxs="i",yaxs="i")
+
+# Add lines for control states
+for (i in 1:ncol(data)) { lines(years,data[gap.start:gap.end,i],col="gray") }
+
+## Add Sweden Line
+lines(years,data[gap.start:gap.end,which(colnames(data)=="Sweden")],lwd=2,col="black")
+
+# Add grid
+abline(v=1990,lty="dotted",lwd=2)
+abline(h=0,lty="dashed",lwd=2)
+legend("bottomleft",legend=c("Sweden","control countries"),
+lty=c(1,1),col=c("black","gray"),lwd=c(2,1),cex=.8)
+arrows(1987,-0.5,1989,-0.5,col="black",length=.1)
+text(1981,-0.5,"VAT + Carbon Tax",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+abline(v=1960)
+abline(v=2005)
+abline(h=-1)
+abline(h=1)
+
+```
+All the countries with a pre-treatment MSPE (mean squared prediction error) at least 20 times larger than Sweden’s pre-treatment MSPE are excluded, which leaves 9 countries in the donor pool. Now the gap in emissions for Sweden in the posttreatment period is the largest of all remaining countries. 
+
+A better inferential method is to look at the ratio of posttreatment MSPE to pretreatment MSPE (Abadie et al. 2010), with the assumption that a large ratio is indicative of a true causal effect from treatment. With the ratio test we do not have to discard countries based on an arbitrarily chosen cutoff rule, and thus the ratio test is advantageous when you have a small number of control units.
+
+### Ratio Test: Ratios of Post-Treatment MSPE to Pre-Treatment MSPE
+```{r}
+ dataprep.out <-
+              dataprep(foo = carbontax,
+                       predictors = c("GDP_per_capita" , "gas_cons_capita" , "vehicles_capita" ,
+                                      "urban_pop") ,
+                       predictors.op = "mean" ,
+                       time.predictors.prior = 1980:1989 ,
+                       special.predictors = list(
+                         list("CO2_transport_capita" , 1989 , "mean"),
+                         list("CO2_transport_capita" , 1980 , "mean"),
+                         list("CO2_transport_capita" , 1970 , "mean")
+                                                ),
+                       dependent = "CO2_transport_capita",
+                       unit.variable = "Countryno",
+                       unit.names.variable = "country",
+                       time.variable = "year",
+                       treatment.identifier = 13,
+                       controls.identifier = c(1:12, 14:15),
+                       time.optimize.ssr = 1960:1989,
+                       time.plot = 1960:2005
+                       )
+                       
+ synth.out <- synth(data.prep.obj = dataprep.out,
+                    method = "All")                      
+
+ gaps <- dataprep.out$Y1plot - (dataprep.out$Y0plot %*% synth.out$solution.w)
+ mspepost <- mean((gaps[31:46, 1])^2)
+ mspepre <- mean((gaps[1:30, 1])^2)
+ mspepost/mspepre
+```
+### Leave-One-Out: Distribution of the Synthetic Control for Sweden
+
+For the leave-one-out test, we iteratively eliminate one of the nine control countries that got a W weight larger than 0.001 (0.1 percent) to check if the results are driven by one or a few influential controls.
+```{r}
+# Example: eliminating New Zealand
+
+ dataprep.out <-
+              dataprep(foo = carbontax,
+                       predictors = c("GDP_per_capita" , "gas_cons_capita" , "vehicles_capita" ,
+                                      "urban_pop") ,
+                       predictors.op = "mean" ,
+                       time.predictors.prior = 1980:1989 ,
+                       special.predictors = list(
+                         list("CO2_transport_capita" , 1989 , "mean"),
+                         list("CO2_transport_capita" , 1980 , "mean"),
+                         list("CO2_transport_capita" , 1970 , "mean")
+                                                ),
+                       dependent = "CO2_transport_capita",
+                       unit.variable = "Countryno",
+                       unit.names.variable = "country",
+                       time.variable = "year",
+                       treatment.identifier = 13,
+                       controls.identifier = c(1:8, 10:12, 14:15),
+                       time.optimize.ssr = 1960:1989,
+                       time.plot = 1960:2005
+                       )
+                       
+synth.out <- synth(data.prep.obj = dataprep.out,
+                    method = "All")
+         
+par(col.axis = "darkgray", col.lab = "black", col.main = "black", col.sub = "black")  # Set axis, labels, title, and subtitle color to black
+par(font.main = 1, font.axis = 1, font.lab = 1, font.sub = 1)  # Set font style to bold
+par(bg = "white")            
+  path.plot(synth.res = synth.out,
+           dataprep.res = dataprep.out,
+           Ylab = "Metric tons per capita (CO2 from transport)",
+           Xlab = "Year",
+           Ylim = c(0,3),
+           Legend = c("Sweden","synthetic Sweden"),
+           Legend.position = "bottomright"
+           )
+# Add line 
+abline(v=1990,lty="dotted",lwd=2)
+arrows(1987,1.0,1989,1.0,col="black",length=.1)	
+Cex.set <- 1
+text(1981,1.0,"VAT + Carbon tax",col="blue",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+```
+```{r}
+leaveoneout <- read.dta('leave_one_out_data.dta')
+attach(leaveoneout)
+
+plot(Year[1:46], sweden, type="l", lwd=2, col="black", ylim=c(0,3.0), xlab="Year", ylab="Metric tons per capita (CO2 from transport)", xaxs="i",yaxs="i" )
+abline(v=1990,lty="dotted",lwd=2)
+legend("bottomleft",legend=c("Sweden","synthetic Sweden", "synthetic Sweden (leave-one-out)   "),
+lty=c(1,2,1),col=c("black","black","gray"),lwd=c(2,2,2),cex=0.8)
+lines(Year, excl_belgium, lty="solid" ,lwd=2, col="gray")
+lines(Year, excl_denmark, lty="solid",lwd=2, col="gray")
+lines(Year, excl_greece, lty="solid" ,lwd=2, col="gray")
+lines(Year, excl_newzealand, lty="solid" ,lwd=2, col="gray")
+lines(Year, excl_switzerland, lty="solid" ,lwd=2, col="gray")
+lines(Year, excl_unitedstates, lty="solid" ,lwd=2, col="gray")
+lines(Year, synth_sweden, lty="dashed" , lwd=2, col="black")
+lines(Year, sweden, lty="solid" , lwd=2, col="black")
+arrows(1987,1.0,1989,1.0,col="black",length=.1)	
+Cex.set <- 1
+text(1981,1.0,"VAT + Carbon tax",cex=Cex.set)   
+grid(lty = "dotted", col = "gray")
+```
+
+As we see from Figure 9, the main results are robust to the elimination of one donor pool country at a time. The average of the nine iterations gives an emission reduction of 10.4 percent. This is relatvely close to the 11.1 percent that we got with "Synthetic Sweden" earlier.
+
+### possible confounder
+A common argument against carbon taxation is that it will hurt economic growth. We also find that there is  clear evidence of a link between GDP growth and growth in CO2 emissions. This could mean that the introduction of the carbon tax reduced the level of GDP in Sweden post-treatment, and that this is the actual driver
+behind the emission reductions.
+
+Or, alternatively, this can be treated as an exogenous variable in the form of financial and economic crisis in the early 1990s which is reducing the emissions. 
+
+To counter this claim we need to analyse the reduction in gdp per capita with synthetic sweden.
+```{r}
+
+descriptive <- read.dta('descriptive_data.dta')
+attach(descriptive)
+
+descriptive[1:46, 1:14]
+
+par(col.axis = "darkgray", col.lab = "black", col.main = "black", col.sub = "black")  # Set axis, labels, title, and subtitle color to black
+par(font.main = 1, font.axis = 1, font.lab = 1, font.sub = 1)  # Set font style to bold
+par(bg = "white")   
+plot(year[1:46], GDP_Sweden, type="l", lwd=2, col="black", ylim=c(0,35000), xlab="Year", ylab="GDP per capita (PPP, 2005 USD)", xaxs="i",yaxs="i" )
+abline(v=1990,lty="dotted",lwd=2)
+legend("bottomright",legend=c("Sweden","synthetic Sweden"),
+lty=c(1:2),col=c("black","black"),lwd=c(2,2),cex=.8)
+lines(year, GDP_Synthetic_Sweden, lty="dashed" , lwd=2, col="black")
+abline(v=1990,lty="dotted",lwd=2)
+arrows(1987,10000,1989,10000,col="black",length=.1)	
+Cex.set <- 1
+text(1981,10000,"VAT + Carbon tax",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+
+
+#Adding shaded areas for the two main recessions
+ 
+plot(year[1:46], GDP_Sweden, type="l", lwd=2, col="white", ylim=c(0,35000), xlab="Year", ylab="GDP per capita (PPP, 2005 USD)", xaxs="i",yaxs="i" )
+rect(1991, 100, 1993, 34900,
+     border = "gray95", col = "gray95")
+rect(1976, 100, 1978, 34900,
+     border = "gray95", col = "gray95")
+abline(v=1990,lty="dotted",lwd=2)
+lines(year, GDP_Sweden, lty="solid", lwd=2, col="black")
+legend("bottomright",legend=c("Sweden","synthetic Sweden"),
+lty=c(1:2),col=c("black","black"),lwd=c(2,2),cex=.8)
+lines(year, GDP_Synthetic_Sweden, lty="dashed" , lwd=2, col="black")
+abline(v=1990,lty="dotted",lwd=2)
+arrows(1987,10000,1989,10000,col="black",length=.1)	
+Cex.set <- 1
+text(1981,10000,"VAT + Carbon tax",cex=Cex.set)
+grid(lty = "dotted", col = "gray")
+
+```
+
+```{r}
+par(col.axis = "darkgray", col.lab = "black", col.main = "black", col.sub = "black")  # Set axis, labels, title, and subtitle color to black
+par(font.main = 1, font.axis = 1, font.lab = 1, font.sub = 1)  # Set font style to bold
+par(bg = "white")   
+par(mar = c(5, 4, 4, 4))
+plot(year, gap_CO2_emissions_transp, type="l", lwd=2, col="black", ylim=c(-0.50,0.50), xlab="Year" , ylab="Gap in metric tons per capita (CO2 from transport)", xaxs="i",yaxs="i")
+abline(v=1990,lty="dotted",lwd=1.5)
+abline(h = 0, col = "black", lty = "dashed", lwd = 1)
+par(new = TRUE)
+plot(year, gap_GDP, type="l" , lwd=2, col="gray50", ylim=c(-2500,2500),
+ xlab="", ylab="", xaxt="n", yaxt="n", xaxs="i", yaxs="i")
+ axis(side=4)
+ mtext("Gap in GDP per capita (PPP, 2005 USD)", side = 4, line = 2.8) 
+legend("bottomleft",legend=c("CO2 Emissions (left y-axis)" ,"GDP per capita (right y-axis)"),
+lty=c(1,1),col=c("black","gray50"),lwd=c(2,2),cex=0.8)
+arrows(1987,1500,1989,1500,col="black",length=.1)	
+Cex.set <- 1
+text(1980,1500,"VAT + Carbon tax",cex=Cex.set) 
+grid(lty = "dotted", col = "gray")
+
+
+#Adding shaded areas for the two main recessions
+par(mar = c(5, 4, 4, 4))
+plot(year, gap_CO2_emissions_transp, type="l", lwd=2, col="white", ylim=c(-0.50,0.50), xlab="Year" , ylab="Gap in metric tons per capita (CO2 from transport)", xaxs="i",yaxs="i")
+rect(1991, -0.496, 1993, 0.496,
+     border = "gray95", col = "gray95")
+rect(1976, -0.496, 1978, 0.496,
+     border = "gray95", col = "gray95")
+abline(v=1990,lty="dotted",lwd=1.5)
+abline(h = 0, col = "black", lty = "dashed", lwd = 1)
+lines(year, gap_CO2_emissions_transp, lty="solid", lwd=2, col="black")
+par(new = TRUE)
+plot(year, gap_GDP, type="l" , lwd=2, col="gray50", ylim=c(-2500,2500),
+ xlab="", ylab="", xaxt="n", yaxt="n", xaxs="i", yaxs="i")
+ axis(side=4)
+ mtext("Gap in GDP per capita (PPP, 2005 USD)", side = 4, line = 2.8) 
+legend("bottomleft",legend=c("CO2 Emissions (left y-axis)" ,"GDP per capita (right y-axis)"),
+lty=c(1,1),col=c("black","gray50"),lwd=c(2,2),cex=0.8)
+arrows(1987,1500,1989,1500,col="black",length=.1)	
+Cex.set <- 1
+text(1980,1500,"VAT + Carbon tax",cex=Cex.set) 
+grid(lty = "dotted", col = "gray")
+
+```
+Figures show that GDP per capita in Sweden along with Synthetic Sweden track each other quite well during the 30 years before and 16 years after treatment. We can conclude that there is no indication that the domestic recession in 1991–1993 is driving emissions posttreatment and there is no observable (long-term) negative effect on GDP from the carbon tax.
+
+###Disentangling the Carbon Tax and VAT
+
+For the purpose of disentangling the VAT and carbon tax effect on transport emissions we analyze annual time-series data of the consumption and real price of gasoline in Sweden from 1970-2011. The article already decomposes the retail price of gasoline into its carbon tax-exclusive price component and the carbon tax. VAT is a constant and a multiplier so it means that it is perfectly correlated with all the price components and not treated separately.
+We regress vector of control variables GDP per capita, urbanization, the unemployment rate and a time trend, both parts of the gasoline price and dummy of 1 for years that are from 1991 on the log gasoline consumption per capita. We create different models that control for different variables.
+
+Furthermore we are also concerned about the possible omitted variables and the endogeneity of gasoline prices (if gasoline consumption affects the gasoline prices). In reality we can argue that this effect is not a risk as Sweden is a small country and its demand does not influence the prices of gasoline. But to make sure that we are getting the right results, we include an instrumental variable in our model. We use 2-stage least squares regression and use the energy tax rate and the brend crude oil price. We can argue for the instrument validity of energy tax rate:
+- instrument relevance: crude oil price is correlated with gas prices as well as energy tax is directly a part of gas prices.
+- instrument exogeneity:energy tax rates are changes infrequently and should not influence the consumption of gasoline directly.
+
+We run different models and compare the estimates. We observe that the estimated coefficients in column 4,5 and 6 are almost identical, thus eliminating the likely problem of endogeneity.The results of OLS regression of our log-linear model show that one-unit change to the carbon tax is associated with a change in gasoline consumption of 18.6 % and one unit change of the tax-exclusive price is associated with 6% change in gasoline consumption. Therefore we can observe that carbon tax elasticity is around 3.1-4.5 times larger thant the corresponding price elasticity. We can calculate the price elasticities as 
+E = dy/dx * (X/Y) = b X at the sample mean. The price elasticity of demand is calculated as being -0.51 and the carbon tax elasticity is -1.57.
+
+```{r}
+library(haven)
+disentangling <- read_dta("disentangling_regression_data.dta")
+
+
+model1 <- lm(log_gas_cons ~ real_carbontaxexclusive_with_vat + real_carbontax_with_vat + d_carbontax + t, data=disentangling)
+model2 <- update(model1, . ~ . + real_gdp_cap_1000)
+model3 <- update(model2, . ~ . + urban_pop)
+model4 <- update(model3, . ~ . + unemploymentrate)
+
+iv_model1 <- ivreg(log_gas_cons ~ real_carbontaxexclusive_with_vat + real_carbontax_with_vat + d_carbontax + t + real_gdp_cap_1000 + urban_pop + unemploymentrate | real_energytax_with_vat + real_carbontax_with_vat + d_carbontax + t + real_gdp_cap_1000 + urban_pop + unemploymentrate, data=disentangling)
+
+iv_model2 <- ivreg(log_gas_cons ~ real_carbontaxexclusive_with_vat + real_carbontax_with_vat + d_carbontax + t + real_gdp_cap_1000 + urban_pop + unemploymentrate | real_oil_price_sek + real_carbontax_with_vat + d_carbontax + t + real_gdp_cap_1000 + urban_pop + unemploymentrate, data=disentangling)
+
+
+
+
+```
+
+
+
+```{r}
+stargazer(model1, model2, model3, model4, iv_model1, iv_model2, type = "text",
+          header = FALSE, 
+          title = "Regression Results",
+          model.names = FALSE,
+          ci = TRUE,
+          omit.stat = "all",
+          add.lines = list(c("Observations", nrow(disentangling), nrow(disentangling), nrow(disentangling), nrow(disentangling), nrow(disentangling), nrow(disentangling))))
+```
+
+We then create predictions from the estimated full model (model4) and disentangle the effect of the carbon tax on gasoline consumption. We could also calculate the effect on emissions from the effect of VAT and carbon tax as in the article, but we omit this part due to the missing empirical data on diesel consumption and (weighted) emissions factors. We do this by predicting gasoline consumption using the full model, without the carbon tax and gasoline consumption without the carbon tax and without the VAT. We then plot the data on the line plot and can observe the contributions of the VAT and carbon tax to the reduction of the consumption of gas per capita.
+
+```{r}
+#creating the predictions
+
+#Predict the full model
+disentangling$yhat <- predict(model4, newdata = disentangling)
+
+# Predict without the carbon tax
+disentangling_no_carb <- disentangling %>%
+  mutate(d_carbontax = 0, real_carbontax_with_vat = 0)
+
+disentangling_no_carb$yhat_nocarb <- predict(model4, newdata = disentangling_no_carb)
+
+# Predict without the carbon tax and without VAT
+disentangling_no_carb_novat <- disentangling %>%
+  mutate(real_carbontaxexclusive_with_vat = real_carbontaxexclusive, d_carbontax = 0, real_carbontax_with_vat = 0)
+disentangling_no_carb_novat$yhat_nocarb_novat <- predict(model4, newdata = disentangling_no_carb_novat)
+
+# We decide not to convert the data to emissions, but rather keep it and see how the consumption of the gas consumption changes
+
+# To create a summary table of the original and predicted values
+summary_table <- data.frame(
+  year = disentangling$year,
+  LogGasCons = disentangling$log_gas_cons,
+  CarbonTaxandVAT = disentangling$yhat,
+  NoCarbonTaxWithVAT = disentangling_no_carb$yhat_nocarb,
+  NoCarbonTaxNoVAT = disentangling_no_carb_novat$yhat_nocarb_novat
+)
+
+# Assuming you want to display the first few rows of the summary table
+head(summary_table)
+
+
+```
+
+
+```{r}
+
+long_summary_table <- pivot_longer(summary_table, cols = c(CarbonTaxandVAT, NoCarbonTaxWithVAT, NoCarbonTaxNoVAT),
+                        names_to = "TaxStatus", values_to = "Predictions")
+long_summary_table <- long_summary_table %>% mutate(gasconspredictions=exp(Predictions))
+
+ggplot(long_summary_table, aes(x = year, y = gasconspredictions, color = TaxStatus, group = TaxStatus)) +
+  geom_line(aes(linetype = TaxStatus)) +
+  scale_linetype_manual(values = c("longdash", "dotdash", "solid")) + # Custom line types
+  labs(x = "Year", y = "Consumption of gasoline per capita (litres)", title="Disentangling the carbon tax and VAT") +
+  theme_minimal() +
+  geom_vline(xintercept = 1990, linetype = "dotted") + # Add vertical line for 1990
+  scale_x_continuous(breaks = seq(min(long_summary_table$year), max(long_summary_table$year), by = 5)) 
+ggsave('figure13.jpg')
+
+```
+
+
+## Conclusion
+In this notebook we used the replication R code and the code from Stata to reproduce the results. During the course of recreating the codes we learned about how to apply the synthetic-control method and how to rigorously test it. Furthermore we learned more about how to apply different econometric and machine learning tools to observe the economic effects of different policies or tax rises.
+
